@@ -17,7 +17,14 @@ const plexMono = IBM_Plex_Mono({
 
 export const metadata = {
   title: "Rubik's Cube Console",
-  description: 'Interactive 3D Rubik&rsquo;s Cube with a full grid of face-turn buttons.',
+  description:
+    "An interactive 3D Rubik's Cube that solves itself: the beginner's method in code, one typed model decision per step.",
+  applicationName: "Rubik's Cube Console",
+  openGraph: {
+    title: "Rubik's Cube Console",
+    description: "A cube that solves itself \u2014 one typed model decision per step, code plays the moves.",
+    type: 'website',
+  },
 };
 
 export const viewport = {
@@ -25,6 +32,10 @@ export const viewport = {
   initialScale: 1,
   viewportFit: 'cover',
   colorScheme: 'light dark',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#eceae5' },
+    { media: '(prefers-color-scheme: dark)', color: '#101218' },
+  ],
 };
 
 export default function RootLayout({ children }) {
