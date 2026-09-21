@@ -1,16 +1,8 @@
 // Server-only. TYPESAFE_API_KEY is read here and never reaches the browser.
-// The client posts a cube state; this route asks Jev one typed question —
-// which of the 18 face turns to play next — and returns the answer.
-import { validFacelets } from '../../../lib/kimi';
-import {
-  DEFAULT_MODEL,
-  INSTRUCTIONS,
-  RATES,
-  buildState,
-  costOf,
-  moveOptions,
-  readAnswer,
-} from '../../../lib/jev';
+// Jev answers one `choice` question per solve step: read the cube. The page
+// holds the right answer and the algorithm, so this is perception, not search.
+import { readAsk, optionMap } from '../../../lib/ask';
+import { DEFAULT_MODEL, RATES, costOf } from '../../../lib/jev';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,10 +19,7 @@ function json(body, status = 200) {
 export async function POST(request) {
   const key = process.env.TYPESAFE_API_KEY;
   if (!key) {
-    return json(
-      { error: 'TYPESAFE_API_KEY is not set on the server. Add it to .env, then restart.' },
-      503
-    );
+    return json({ error: 'TYPESAFE_API_KEY is not set on the server. Add it to .env, then restart.' }, 503);
   }
 
   let body;
@@ -40,13 +29,8 @@ export async function POST(request) {
     return json({ error: 'Expected a JSON body.' }, 400);
   }
 
-  const facelets = validFacelets(body?.facelets);
-  if (!facelets) return json({ error: 'facelets must be 54 characters, nine of each of U D L R F B.' }, 400);
-  const stickersHome = Math.min(Math.max(Number(body?.stickersHome) || 0, 0), 54);
-  const lastMove = typeof body?.lastMove === 'string' && /^[UDLRFB](2|')?$/.test(body.lastMove)
-    ? body.lastMove
-    : '';
-  const lastFace = lastMove ? lastMove[0] : '';
+  const ask = readAsk(body);
+  if (!ask) return json({ error: 'Malformed question.' }, 400);
   const model = process.env.JEV_MODEL || DEFAULT_MODEL;
 
   const started = Date.now();
@@ -58,13 +42,16 @@ export async function POST(request) {
       signal: request.signal,
       body: JSON.stringify({
         model,
-        state: buildState(facelets, stickersHome, lastMove),
+        state: {
+          task: "Reading a Rubik's Cube mid-solve, using the beginner's method.",
+          stage: ask.stage.name,
+          looking_at: ask.subject,
+          cube_now: ask.slots,
+          how_to_read_it:
+            'Every slot on the cube is listed with the colour showing on each of its faces. A piece is named by its colours; it is facing a direction when that colour shows on that face.',
+        },
         questions: {
-          next_move: {
-            type: 'choice',
-            instructions: INSTRUCTIONS,
-            criteria: moveOptions(lastFace),
-          },
+          reading: { type: 'choice', instructions: ask.prompt, criteria: optionMap(ask.options) },
         },
       }),
     });
@@ -82,7 +69,6 @@ export async function POST(request) {
     } catch {
       detail = '';
     }
-
     if (upstream.status === 429) {
       const header = Number(upstream.headers.get('retry-after'));
       const suggested = Number.isFinite(header) && header > 0 ? header * 1000 : 5_000;
@@ -95,19 +81,20 @@ export async function POST(request) {
     if (upstream.status === 402 || /quota|balance|insufficient|credit|billing/i.test(detail)) {
       return json({ error: 'sorry my fun wallet is empty now :)', walletEmpty: true, ms }, 402);
     }
-    // Upstream text only — the key is never echoed back.
     return json({ error: `TypeSafe returned ${upstream.status}.`, detail, ms }, 502);
   }
 
   const data = await upstream.json();
-  const move = readAnswer(data?.answers?.next_move);
+  const answer = data?.answers?.reading;
   const usage = {
     input_tokens: data?.usage?.input_tokens || 0,
     output_tokens: data?.usage?.output_tokens || 0,
   };
 
   return json({
-    move,
+    key: typeof answer?.choice === 'string' ? answer.choice : null,
+    probability: answer?.probabilities?.[answer?.choice] ?? null,
+    confidence: typeof answer?.confidence === 'number' ? answer.confidence : null,
     usage,
     cost: costOf(usage),
     ms,

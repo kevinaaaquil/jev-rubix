@@ -23,7 +23,7 @@ export function useStats() {
 
 export function summarise(records) {
   if (!records.length) {
-    return { solves: 0, totalMs: 0, totalMoves: 0, avgMs: 0, avgMoveMs: 0, bestMs: 0, cost: 0 };
+    return { solves: 0, totalMs: 0, totalMoves: 0, avgMs: 0, avgMoveMs: 0, bestMs: 0, cost: 0, reads: 0, correct: 0 };
   }
   const totalMs = records.reduce((sum, r) => sum + r.durationMs, 0);
   const totalMoves = records.reduce((sum, r) => sum + r.moves, 0);
@@ -35,5 +35,7 @@ export function summarise(records) {
     avgMoveMs: totalMoves ? totalMs / totalMoves : 0,
     bestMs: Math.min(...records.map((r) => r.durationMs)),
     cost: records.reduce((sum, r) => sum + (r.cost || 0), 0),
+    reads: records.reduce((sum, r) => sum + (r.reads || 0), 0),
+    correct: records.reduce((sum, r) => sum + (r.correct || 0), 0),
   };
 }

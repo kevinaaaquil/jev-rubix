@@ -57,6 +57,12 @@ export default function StatsModal({ records, onClose, onClear }) {
               <div><span>Average solve</span><b>{clock(totals.avgMs)}</b></div>
               <div><span>Best solve</span><b>{clock(totals.bestMs)}</b></div>
               {totals.cost > 0 ? <div><span>Model spend</span><b>{money(totals.cost)}</b></div> : null}
+              {totals.reads > 0 ? (
+                <div>
+                  <span>Cube read correctly</span>
+                  <b>{Math.round((100 * totals.correct) / totals.reads)}%</b>
+                </div>
+              ) : null}
             </div>
 
             <div className="round-table">

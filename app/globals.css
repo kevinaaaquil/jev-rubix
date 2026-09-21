@@ -392,3 +392,48 @@ button.act.solve-jev:hover:not(:disabled){
 button.act.solve-jev::before{
   content:''; width:6px; height:6px; border-radius:50%; background:currentColor;
 }
+
+/* ---------- one decision per step ---------- */
+.decision{
+  border:1px solid var(--line); border-radius:12px; background:var(--panel-2);
+  padding:11px 13px; display:flex; flex-direction:column; gap:9px;
+}
+.decision-prompt{
+  margin:0; font-family:var(--font-mono), ui-monospace, monospace; font-size:13px; color:var(--ink);
+}
+.caret{color:var(--accent); margin-right:6px}
+.decision-subject{color:var(--ink-3)}
+.decision-read{
+  margin:0; display:flex; align-items:center; gap:9px; flex-wrap:wrap;
+  font-family:var(--font-mono), ui-monospace, monospace; font-size:12px; color:var(--ink-2);
+}
+.decision-read .tick{color:var(--good); font-weight:700}
+.decision-read.wrong .tick{color:#e0603c}
+.decision-text{flex:1; min-width:140px}
+.prob-bar{
+  flex:none; width:84px; height:6px; border-radius:99px;
+  background:color-mix(in srgb, var(--ink-3) 30%, transparent); overflow:hidden;
+}
+.prob-bar span{display:block; height:100%; background:var(--accent); border-radius:99px}
+.prob-value{
+  font-variant-numeric:tabular-nums; color:var(--ink); min-width:34px; text-align:right;
+}
+.decision-alg{
+  margin:0; display:flex; align-items:baseline; gap:10px;
+  font-family:var(--font-mono), ui-monospace, monospace; font-size:16px; font-weight:600;
+  color:var(--good); letter-spacing:.04em; overflow-x:auto; white-space:nowrap;
+}
+.decision-alg .arrow{color:var(--ink-3)}
+.decision-ms{margin-left:auto; font-size:11px; font-weight:400; color:var(--ink-3); flex:none}
+
+.stage-list{
+  list-style:none; margin:0; padding:0; display:grid; gap:2px 14px;
+  grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
+  font-family:var(--font-mono), ui-monospace, monospace; font-size:11px; color:var(--ink-3);
+}
+.stage-list li{display:flex; gap:7px; align-items:center}
+.stage-list .stage-mark{width:9px; display:inline-block}
+.stage-list li.done{color:var(--ink-2)}
+.stage-list li.done .stage-mark{color:var(--good)}
+.stage-list li.current{color:var(--ink); font-weight:600}
+.stage-list li.current .stage-mark{color:var(--accent)}

@@ -1,25 +1,13 @@
-// Server-only. MOONSHOT_API_KEY is read here and never sent to the browser:
-// the client posts a cube state, this route builds the prompt, calls Kimi and
-// returns moves plus usage. Nothing from the request reaches the model except
-// 54 validated facelet characters.
-import {
-  DEFAULT_MODEL,
-  SYSTEM_PROMPT,
-  costOf,
-  parseReply,
-  ratesFor,
-  userPrompt,
-  validFacelets,
-} from '../../../lib/kimi';
+// Server-only. MOONSHOT_API_KEY is read here and never reaches the browser.
+// Kimi answers exactly the question Jev is asked — read the cube — so the two
+// readings can be compared on accuracy, latency and price.
+import { readAsk } from '../../../lib/ask';
+import { DEFAULT_MODEL, costOf, ratesFor } from '../../../lib/kimi';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const ENDPOINT = 'https://api.moonshot.ai/v1/chat/completions';
-// kimi-k2.6 is the cheapest model this key can reach ($0.95 / $4.00 per 1M).
-// One-shot solving: a whole solve is 60-100 moves for a layer-by-layer method,
-// and fewer, bigger calls also keep the per-minute limit at arm's length.
-const MAX_MOVES = 120;
 const WINDOW_MS = 60_000;
 const MAX_CALLS_PER_WINDOW = 90;
 
@@ -48,18 +36,28 @@ function json(body, status = 200) {
   });
 }
 
+const SYSTEM = [
+  "You read Rubik's Cube positions. You are shown every slot on the cube with the",
+  'colour showing on each of its faces, and asked one question about what you see,',
+  'with a fixed list of possible answers.',
+  '',
+  'A piece is named by its colours, in any order. It sits in whichever slot shows',
+  'exactly those colours, and a colour faces the direction it shows on.',
+  '',
+  'Answer with JSON only: {"choice": "<one option key, copied exactly>", "confidence": 0.0-1.0}',
+].join('\n');
+
 export async function POST(request) {
   const key = process.env.MOONSHOT_API_KEY;
   if (!key) {
     return json(
-      { error: 'MOONSHOT_API_KEY is not set on the server. Add it to .env.local (local) or the Vercel project env, then restart.' },
+      { error: 'MOONSHOT_API_KEY is not set on the server. Add it to .env, then restart.' },
       503
     );
   }
 
   const cooloff = rateLimited(request);
   if (cooloff) {
-    // Same shape as an upstream limit, so the solver waits it out instead of failing.
     return json(
       { error: 'Too many solve calls in the last minute.', rateLimited: true, retryAfterMs: cooloff },
       429
@@ -73,16 +71,28 @@ export async function POST(request) {
     return json({ error: 'Expected a JSON body.' }, 400);
   }
 
-  const facelets = validFacelets(body?.facelets);
-  if (!facelets) return json({ error: 'facelets must be 54 characters, nine of each of U D L R F B.' }, 400);
+  const ask = readAsk(body);
+  if (!ask) return json({ error: 'Malformed question.' }, 400);
 
-  const maxMoves = Math.min(Math.max(Number(body?.maxMoves) || 80, 1), MAX_MOVES);
-  const stickersHome = Math.min(Math.max(Number(body?.stickersHome) || 0, 0), 54);
   const model = process.env.KIMI_MODEL || DEFAULT_MODEL;
-  // k2.6 reasons by default and will happily spend every token thinking about a
-  // cube without ever emitting the JSON, so thinking is off unless asked for.
-  const thinking = process.env.KIMI_THINKING === 'enabled' ? 'enabled' : 'disabled';
   const rates = ratesFor(model, process.env);
+  // k2.6 reasons by default and will spend every token on it; this is a
+  // perception question, so thinking stays off unless asked for.
+  const thinking = process.env.KIMI_THINKING === 'enabled' ? 'enabled' : 'disabled';
+
+  const user = [
+    `Stage of the solve: ${ask.stage.name}. Looking at: ${ask.subject}.`,
+    '',
+    'The cube right now — every slot, and the colour showing on each of its faces:',
+    JSON.stringify(ask.slots, null, 1),
+    '',
+    ask.prompt,
+    '',
+    'Options:',
+    ...ask.options.map((o) => `  ${o.key} = ${o.text}`),
+    '',
+    'Reply with JSON only.',
+  ].join('\n');
 
   const started = Date.now();
   let upstream;
@@ -90,16 +100,15 @@ export async function POST(request) {
     upstream = await fetch(ENDPOINT, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-      signal: request.signal, // aborting the browser request aborts Kimi too
+      signal: request.signal,
       body: JSON.stringify({
         model,
-        // k2.6 rejects any temperature but 1, so leave it at the model default.
         thinking: { type: thinking },
-        max_tokens: thinking === 'enabled' ? 8000 : 2500,
+        max_tokens: thinking === 'enabled' ? 8000 : 400,
         response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userPrompt({ facelets, maxMoves, stickersHome }) },
+          { role: 'system', content: SYSTEM },
+          { role: 'user', content: user },
         ],
       }),
     });
@@ -118,68 +127,58 @@ export async function POST(request) {
       detail = '';
     }
 
-    // Out of credit reads as a quota/balance error, which is not a bug to debug.
-    const broke =
-      upstream.status === 402 ||
-      /quota|balance|insufficient|credit|arrears|billing/i.test(detail);
-    if (broke) {
+    if (upstream.status === 402 || /quota|balance|insufficient|credit|arrears|billing/i.test(detail)) {
       return json({ error: 'sorry my fun wallet is empty now :)', walletEmpty: true, ms }, 402);
     }
-
-    // Moonshot limits requests per minute; that is a wait, not a failure.
     if (upstream.status === 429) {
-      // Moonshot's Retry-After is often 1s, which is not long enough to clear a
-      // per-minute limit, so never back off by less than five seconds.
+      // Moonshot's Retry-After is often 1s, too short to clear a per-minute limit.
       const header = Number(upstream.headers.get('retry-after'));
       const suggested = Number.isFinite(header) && header > 0 ? header * 1000 : 15_000;
-      const retryAfterMs = Math.min(Math.max(suggested, 5_000), 60_000);
       return json(
-        { error: 'Kimi is rate-limiting this key.', rateLimited: true, retryAfterMs, ms },
+        { error: 'Kimi is rate-limiting this key.', rateLimited: true, retryAfterMs: Math.min(Math.max(suggested, 5_000), 60_000), ms },
         429
       );
     }
-
-    if (upstream.status === 401) {
-      return json({ error: 'Kimi rejected the API key.', ms }, 502);
-    }
-
+    if (upstream.status === 401) return json({ error: 'Kimi rejected the API key.', ms }, 502);
     if (upstream.status === 404) {
-      return json(
-        { error: `The model "${model}" is not available to this key. Set KIMI_MODEL to one your account lists.`, ms },
-        502
-      );
+      return json({ error: `The model "${model}" is not available to this key.`, ms }, 502);
     }
-
-    // Upstream text only — the key is never echoed back.
     return json({ error: `Kimi API returned ${upstream.status}.`, detail, ms }, 502);
   }
 
   const data = await upstream.json();
   const text = data?.choices?.[0]?.message?.content ?? '';
-  const parsed = parseReply(text);
+  let parsed = {};
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) {
+      try {
+        parsed = JSON.parse(match[0]);
+      } catch {
+        parsed = {};
+      }
+    }
+  }
+
+  const chosen = typeof parsed.choice === 'string' ? parsed.choice.trim() : '';
+  const valid = ask.options.some((o) => o.key === chosen);
 
   const rawUsage = data?.usage || {};
   const usage = {
     prompt_tokens: rawUsage.prompt_tokens || 0,
     completion_tokens: rawUsage.completion_tokens || 0,
-    reasoning_tokens: rawUsage.completion_tokens_details?.reasoning_tokens || 0,
-    cached_tokens:
-      rawUsage.cached_tokens ||
-      rawUsage.prompt_tokens_details?.cached_tokens ||
-      rawUsage.prompt_cache_hit_tokens ||
-      0,
+    cached_tokens: rawUsage.prompt_tokens_details?.cached_tokens || rawUsage.cached_tokens || 0,
   };
 
   return json({
-    moves: parsed.moves.slice(0, maxMoves),
-    rejected: parsed.rejected,
-    stage: parsed.stage,
-    plan: parsed.plan,
+    key: valid ? chosen : null,
+    probability: typeof parsed.confidence === 'number' ? parsed.confidence : null,
     usage,
     cost: costOf(usage, rates),
     ms,
     model,
-    thinking,
     rates,
     finish: data?.choices?.[0]?.finish_reason || '',
   });

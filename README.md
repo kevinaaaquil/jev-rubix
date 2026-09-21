@@ -19,10 +19,14 @@ npm run dev     # http://localhost:3000
 | `app/api/solve/route.js` | Server-only Kimi call. Reads `MOONSHOT_API_KEY`; nothing about it reaches the browser. |
 | `lib/kimi.js` | Prompt, reply parsing, pricing table. No key. |
 | `app/useKimiSolver.js` | The solve loop: post state, apply moves, tally cost, abort. |
-| `app/KimiPanel.jsx` | The floating abort card, shared by both solvers. |
+| `app/SolveOverlay.jsx` | The abort card: the question, the reading, the algorithm. |
+| `app/useSolver.js` | The shared step loop, used by both models. |
+| `lib/beginner.js` | The beginner's method: stages, candidate sequences, search. |
+| `lib/facelets.js` | 54-byte cube and move permutations, derived from the engine. |
+| `lib/questions.js` | The per-stage question, its options, and the true answer. |
+| `lib/ask.js` | Validates a question before it can reach a model. |
 | `app/api/jev/route.js` | Server-only TypeSafe call. Reads `TYPESAFE_API_KEY`. |
-| `lib/jev.js` | Jev's state text, the 18-option choice question, pricing. |
-| `app/useJevSolver.js` | Jev's policy loop: one typed decision per move. |
+| `lib/jev.js` | Jev's model id and pricing. |
 
 ## Notation
 
@@ -42,42 +46,43 @@ all return to solved.
 
 ## Kimi solver
 
-**Solve using Kimi**, the small button under the face-turn grid, asks for a
-complete solve and revisits if that fails.
+The cube is solved by **code**: `lib/beginner.js` runs the beginner's method —
+bottom cross, bottom corners, middle layer, top cross, top corners up, top
+corners home, top edges home — and at each step produces the legal sequences
+that finish that step. Verified over 500 random scrambles: 500 solved, every
+solution replayed through the engine to confirm, ~135 moves and ~12ms each.
 
-Each attempt posts **only the current 54-sticker state** — never the move log, so
-the model cannot invert what was played — and asks for the whole sequence from
-that state to solved, up to 80 moves. The app plays the sequence. If the cube is
-not solved, the new state goes back as a fresh, standalone attempt, with no
-memory of the last one. It stops when the cube is solved, when you hit **Abort**,
-after 10 attempts, or at a $0.25 spend cap (`useKimiSolver` options).
+A model never decides whether the cube gets solved. At each step it is asked
+**one typed question — read the cube**: where the piece being worked on is
+sitting and which way it faces, or which case the last layer is in. The browser
+already knows the answer, so every reply is scored, and the algorithm played
+comes from the solver either way. **Solve using Kimi** and **Solve using Jev**
+run the identical loop with the identical question; only the model differs.
 
-The abort card only exists while a solve is in flight; it shows thinking time,
-moves applied, spend, cost per move, last call latency and stickers home.
+The overlay shows exactly that: the stage and the piece, the model's reading with
+its probability, a tick or a cross once the code checks it, then the algorithm and
+how long the call took.
 
-Measured with `kimi-k2.6`: an attempt returns 70–80 moves in ~7s for ~$0.0013,
-and does not solve the cube — progress hovers around 11–19 of 54 stickers home.
-The stats are the point: they show what the attempt cost and how little it moved.
+### What the two models do with it
 
-## Solve using Jev
+| | Jev (TypeSafe) | Kimi k2.6 (Moonshot) |
+| --- | --- | --- |
+| kind | typed decision, `choice` | text model, JSON reply |
+| latency | ~350ms | ~1,100ms |
+| cost per read | $0.00006 | $0.001 |
+| rate limit | 1,200/min | a few per minute, so its turns are paced 20s apart |
+| reading the cube | 85% right over a full solve | roughly half right |
+| confidence | 0.4-0.8, and it tracks being right | 1.00 on every answer, right or wrong |
 
-The second trigger runs [TypeSafe AI](https://typesafe.ai/)'s **Jev**, a "System
-One" model that answers typed questions rather than writing text. It cannot emit
-a move list, so the solve is a policy loop: each call sends the sticker state and
-one `choice` question — which of the face turns to play next — and the app plays
-whichever option comes back, then asks again. The face just turned is left out of
-the options, since replaying it only undoes or doubles the last move.
+A full Jev solve: 14.8s, 112 moves, 13 reads at 85%, $0.0007. The same solve with
+Kimi takes minutes, because Moonshot's limit forces a 20s gap between questions.
 
-`POST https://api.typesafe.ai/v1/systemone`, model `jev-latest`, key
-`TYPESAFE_API_KEY`, read server-side in `app/api/jev/route.js`. Input is $0.042
-per 1M tokens and output is free, so a move costs about $0.000037 — measured at
-~0.4s per call, 1,200 requests a minute allowed, so no pacing is needed.
-
-Measured: 80 moves in 55s for $0.0029, and it does not solve the cube. Jev's
-distribution over the 18 turns is nearly flat (the chosen move takes 12–23% of
-it, against 5.6% for a coin toss), so it picks one face repeatedly; with the
-repeat guard it alternates two. Progress sits around 11–16 of 54 stickers home.
-That is the honest result for a decision model asked to do search.
+Asking either model to *choose the moves* does not work, and it is worth saying
+why: TypeSafe's own documentation is explicit that System One models "do not
+write replies, produce code, or generate explanations", and an earlier version of
+this app that asked Jev to pick one of the 18 face turns got a nearly flat
+distribution and a cube that turned `U` forever. Search belongs in the code;
+judgement belongs in the model.
 
 ## Stats
 

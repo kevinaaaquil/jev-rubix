@@ -11,11 +11,10 @@ import {
   solutionFromHistory,
 } from '../lib/cube';
 import { CubeScene } from '../lib/cube-scene';
-import { SolveOverlay } from './KimiPanel';
+import SolveOverlay from './SolveOverlay';
 import StatsModal from './StatsModal';
 import { useStats } from './useStats';
-import { useKimiSolver } from './useKimiSolver';
-import { useJevSolver } from './useJevSolver';
+import { useSolver } from './useSolver';
 
 const SPEED_BASE = 580; // slider is inverted: higher slider value = shorter turn
 
@@ -53,8 +52,10 @@ export default function CubeConsole() {
     if (tape) tape.scrollLeft = tape.scrollWidth;
   }, [state.history.length, revealed]);
 
-  const kimi = useKimiSolver(sceneRef);
-  const jev = useJevSolver(sceneRef);
+  // Same loop, same question, same algorithms — only the model differs.
+  // Moonshot allows a few calls a minute, so Kimi's turns are paced.
+  const kimi = useSolver(sceneRef, { endpoint: '/api/solve', who: 'Kimi', minGapMs: 20_000 });
+  const jev = useSolver(sceneRef, { endpoint: '/api/jev', who: 'Jev' });
   const running = kimi.running || jev.running;
   const active = jev.running ? jev : kimi;
   const [session, setSession] = useState(NO_SESSION);
@@ -111,8 +112,10 @@ export default function CubeConsole() {
               ? 'jev'
               : 'you',
       cost: kimi.run.cost + jev.run.cost,
-      rounds: kimi.run.rounds.length + jev.run.rounds.length,
+      rounds: kimi.run.steps.length + jev.run.steps.length,
       thinkMs: kimi.thinkMs + jev.thinkMs,
+      reads: kimi.run.reads + jev.run.reads,
+      correct: kimi.run.correct + jev.run.correct,
       tokens:
         kimi.run.promptTokens + kimi.run.completionTokens + jev.run.promptTokens + jev.run.completionTokens,
     });
@@ -280,7 +283,7 @@ export default function CubeConsole() {
               type="button"
               onClick={kimi.solve}
               disabled={running || state.solved}
-              title={state.solved ? 'Scramble first' : 'Kimi writes a whole solution per call'}
+              title={state.solved ? 'Scramble first' : 'Kimi reads the cube, one question per step'}
             >
               Solve using Kimi
             </button>
@@ -289,7 +292,7 @@ export default function CubeConsole() {
               type="button"
               onClick={jev.solve}
               disabled={running || state.solved}
-              title={state.solved ? 'Scramble first' : 'Jev picks one move at a time from 18 options'}
+              title={state.solved ? 'Scramble first' : 'Jev reads the cube, one question per step'}
             >
               Solve using Jev
             </button>
@@ -365,8 +368,9 @@ export default function CubeConsole() {
         <SolveOverlay
           run={active.run}
           elapsed={active.elapsed}
+          stageList={active.stageList}
           onStop={active.stop}
-          who={jev.running ? 'Jev' : 'Kimi'}
+          who={active.who}
         />
       ) : null}
 
