@@ -11,13 +11,15 @@ const clock = (ms) => {
 };
 const money = (n) => (n >= 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(6)}`);
 
-const SOLVER_LABEL = {
-  you: 'You',
-  kimi: 'Kimi',
-  jev: 'Jev',
-  both: 'You + Kimi',
-  mixed: 'Mixed',
-};
+const NAMES = { you: 'You', kimi: 'Kimi', jev: 'Jev' };
+
+/** "you+jev" -> "You + Jev"; anything unrecognised falls back to a dash. */
+const solverLabel = (value) =>
+  String(value || '')
+    .split('+')
+    .map((part) => NAMES[part])
+    .filter(Boolean)
+    .join(' + ') || '\u2014';
 
 export default function StatsModal({ records, onClose, onClear }) {
   const totals = summarise(records);
@@ -44,8 +46,8 @@ export default function StatsModal({ records, onClose, onClear }) {
 
         {empty ? (
           <p className="modal-empty">
-            No solves recorded yet. Hit <b>Scramble</b>, then solve the cube by hand or with Kimi —
-            that round trip is what gets measured.
+            No solves recorded yet. Hit <b>Scramble</b>, then solve the cube by hand, with
+            <b> Kimi</b> or with <b>Jev</b> — that round trip is what gets measured.
           </p>
         ) : (
           <>
@@ -84,7 +86,7 @@ export default function StatsModal({ records, onClose, onClear }) {
                   {records.map((r) => (
                     <tr key={r.id}>
                       <td>{r.id}</td>
-                      <td>{SOLVER_LABEL[r.solvedBy]}</td>
+                      <td>{solverLabel(r.solvedBy)}</td>
                       <td className="num">{clock(r.durationMs)}</td>
                       <td className="num">{r.moves}</td>
                       <td className="num">{r.moves ? `${Math.round(r.avgMoveMs)}ms` : '—'}</td>

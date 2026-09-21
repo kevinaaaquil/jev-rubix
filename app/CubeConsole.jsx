@@ -92,7 +92,6 @@ export default function CubeConsole() {
     const kimiMoves = Math.min(kimi.run.movesApplied, total);
     const jevMoves = Math.min(jev.run.movesApplied, total - kimiMoves);
     const yourMoves = total - kimiMoves - jevMoves;
-    const byModel = (kimiMoves ? 1 : 0) + (jevMoves ? 1 : 0);
     stats.add({
       at: Date.now(),
       durationMs,
@@ -101,16 +100,9 @@ export default function CubeConsole() {
       yourMoves,
       kimiMoves,
       jevMoves,
-      solvedBy:
-        byModel > 1 || (byModel && yourMoves)
-          ? byModel > 1
-            ? 'mixed'
-            : 'both'
-          : kimiMoves
-            ? 'kimi'
-            : jevMoves
-              ? 'jev'
-              : 'you',
+      solvedBy: [yourMoves && 'you', kimiMoves && 'kimi', jevMoves && 'jev']
+        .filter(Boolean)
+        .join('+'),
       cost: kimi.run.cost + jev.run.cost,
       rounds: kimi.run.steps.length + jev.run.steps.length,
       thinkMs: kimi.thinkMs + jev.thinkMs,
